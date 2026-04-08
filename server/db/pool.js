@@ -14,7 +14,7 @@ export function getPool() {
     pool = new Pool({
       host: process.env.PGHOST || 'localhost',
       port: parseInt(process.env.PGPORT || '5432', 10),
-      database: 'hippocampus',
+      database: process.env.HIPPOCAMPUS_DB || 'hippocampus',
       user: process.env.PGUSER || 'graphheight_sys',
       max: 5,
     });
