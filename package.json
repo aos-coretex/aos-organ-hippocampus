@@ -1,0 +1,16 @@
+{
+  "name": "@coretex-agentic/organ-hippocampus",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/**/*.test.js",
+    "setup-db": "bash scripts/setup-db.sh"
+  },
+  "dependencies": {
+    "@coretex/organ-boot": "file:../../organ-shared-lib",
+    "pg": "^8.13.0",
+    "pgvector": "^0.2.0"
+  }
+}
