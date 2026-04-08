@@ -25,12 +25,11 @@ export function getPool() {
 export async function initPool() {
   const p = getPool();
 
-  // Register pgvector type handler
-  await pgvector.registerTypes(p);
-
   // Verify connectivity and schema
   const client = await p.connect();
   try {
+    // Register pgvector type handler (requires a Client, not a Pool)
+    await pgvector.registerTypes(client);
     const tableCheck = await client.query(`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name IN ('conversations', 'messages')
