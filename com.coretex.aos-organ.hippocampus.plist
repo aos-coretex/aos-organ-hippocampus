@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.coretex.aos-organ.hippocampus</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/Library/AI/AI-AOS/AOS-organ-dev/AOS-organ-hippocampus/AOS-organ-hippocampus-rtime/server/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Library/AI/AI-AOS/AOS-organ-dev/AOS-organ-hippocampus/AOS-organ-hippocampus-rtime</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HIPPOCAMPUS_PORT</key>
+        <string>4008</string>
+        <key>NODE_ENV</key>
+        <string>development</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Library/AI/AI-Infra-MDvaults/MDvault-LLM-Ops/210-Log/hippocampus-logs/hippocampus-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/AI/AI-Infra-MDvaults/MDvault-LLM-Ops/210-Log/hippocampus-logs/hippocampus-stderr.log</string>
+</dict>
+</plist>

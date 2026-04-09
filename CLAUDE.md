@@ -31,7 +31,7 @@
 
 ```bash
 npm install                     # Install dependencies
-npm test                        # Run 48 tests (serial, hippocampus_test DB)
+npm test                        # Run 56 tests (serial, hippocampus_test DB)
 npm run setup-db                # Create database + apply migrations
 HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 ```
@@ -56,15 +56,19 @@ HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 - **conversations** — URN-keyed, pgvector summary embedding (384-dim), JSONB metadata
 - **messages** — UUID-keyed, sequence-ordered, pgvector content embedding (384-dim), FK to conversations
 
-## Stubs (Future Relays)
-
-- Spine message handlers (Relay 5) — onMessage/subscriptions empty
-
 ## Completed Relays
 
 - Relay 2 (h6g-2): Core API — conversations, messages, lifecycle, summarization, query
 - Relay 3 (h6g-3): Phi integration — batch endpoint, context loading, session lifecycle
 - Relay 4 (h6g-4): Vectr integration — embedding pipeline, semantic search, backfill
+- Relay 5 (h6g-5): Spine handlers — directed OTM, broadcast sub/pub, LaunchAgent
+
+## LaunchAgent
+
+- **Label:** `com.coretex.aos-organ.hippocampus`
+- **Plist:** `com.coretex.aos-organ.hippocampus.plist`
+- **Status:** Created, not loaded (rtime deployment pending)
+- **Logs:** `210-Log/hippocampus-logs/`
 
 ## Zero Cross-Contamination Rules
 

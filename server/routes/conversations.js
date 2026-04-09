@@ -7,7 +7,28 @@ import { summarizeConversation, isSummarizerAvailable } from '../../lib/summariz
 import { embedText, embedBatch } from '../../lib/vectr-client.js';
 import pgvector from 'pgvector/pg';
 
-export function createConversationRoutes(app, config) {
+/**
+ * Emit a broadcast event to Spine's POST /events endpoint.
+ * Fire-and-forget — errors are logged but never block the caller.
+ */
+async function emitSpineEvent(spineUrl, eventType, payload) {
+  try {
+    await fetch(`${spineUrl}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_type: eventType, source: 'Hippocampus', payload }),
+    });
+  } catch (err) {
+    process.stdout.write(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'spine_emit_failed',
+      event_type: eventType,
+      error: err.message,
+    }) + '\n');
+  }
+}
+
+export function createConversationRoutes(app, config, getSpine) {
 
   // POST /conversations — Create a new conversation
   app.post('/conversations', async (req, res) => {
@@ -378,7 +399,7 @@ export function createConversationRoutes(app, config) {
     const pool = getPool();
     try {
       const conv = await pool.query(
-        'SELECT urn, status, summary FROM conversations WHERE urn = $1',
+        'SELECT urn, status, summary, message_count, user_urn, persona_urn, agent_session FROM conversations WHERE urn = $1',
         [urn],
       );
       if (conv.rows.length === 0) {
@@ -401,11 +422,24 @@ export function createConversationRoutes(app, config) {
       );
 
       const row = result.rows[0];
+      const convData = conv.rows[0];
 
       // Trigger async summarization if no summary exists
       if (!row.summary && isSummarizerAvailable()) {
         triggerAsyncSummarization(pool, urn, config);
       }
+
+      // Broadcast conversation_completed to Spine (fire-and-forget)
+      emitSpineEvent(config.spineUrl, 'conversation_completed', {
+        conversation_urn: urn,
+        message_count: convData.message_count,
+        summary_generated: !!row.summary,
+        participants: {
+          user_urn: convData.user_urn,
+          persona_urn: convData.persona_urn,
+          agent_session: convData.agent_session,
+        },
+      });
 
       res.json({
         urn: row.urn,

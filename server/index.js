@@ -4,10 +4,21 @@ import { initPool, closePool } from './db/pool.js';
 import { verifySchema } from './db/schema.js';
 import { mountRoutes } from './routes/index.js';
 import { isVectrAvailable } from '../lib/vectr-client.js';
+import { handleDirectedMessage } from './handlers/spine-commands.js';
+
+function log(event, data = {}) {
+  const entry = { timestamp: new Date().toISOString(), event, ...data };
+  process.stdout.write(JSON.stringify(entry) + '\n');
+}
 
 // Initialize database before organ boot
 const dbStats = await initPool();
 await verifySchema();
+
+// Spine reference — set during onStartup, passed to route handlers for broadcast production
+let spineRef = null;
+
+const services = { config };
 
 const organ = await createOrgan({
   name: config.name,
@@ -15,16 +26,47 @@ const organ = await createOrgan({
   binding: config.binding,
   spineUrl: config.spineUrl,
 
-  dependencies: ['Spine'],  // Relay 5 adds full dependency checks
+  dependencies: ['Spine', 'Vectr', 'Graph', 'Phi'],
 
-  routes: (app) => mountRoutes(app, config),
+  routes: (app) => mountRoutes(app, config, () => spineRef),
 
-  onMessage: async (_envelope) => {
-    // Stub — Relay 5 implements directed message handlers
-    return null;
+  // Directed OTM handlers — create_conversation, append_message, query_conversations
+  onMessage: async (envelope) => handleDirectedMessage(envelope, services),
+
+  // Broadcast handlers — session lifecycle events from Phi
+  onBroadcast: async (envelope) => {
+    const { payload } = envelope;
+
+    switch (payload?.event_type) {
+      case 'session_start':
+        log('session_start_received', {
+          session_id: payload.session_id,
+          user_urn: payload.user_urn,
+        });
+        break;
+
+      case 'session_end':
+        log('session_end_received', {
+          session_id: payload.session_id,
+          user_urn: payload.user_urn,
+        });
+        break;
+
+      default:
+        // Unknown broadcast — ignore silently
+        break;
+    }
   },
 
-  subscriptions: [],  // Stub — Relay 5 adds broadcast subscriptions
+  // Subscribe to Phi session lifecycle events
+  subscriptions: [
+    { event_type: 'session_start', source: 'Phi' },
+    { event_type: 'session_end', source: 'Phi' },
+  ],
+
+  onStartup: async ({ spine }) => {
+    spineRef = spine;
+  },
 
   healthCheck: async () => {
     const { getPool } = await import('./db/pool.js');
@@ -63,11 +105,17 @@ const organ = await createOrgan({
     }
   },
 
-  introspectCheck: async () => ({
-    db_stats: dbStats,
-    connected_producers: ['Phi', 'Vectr'],
-    connected_consumers: ['Thalamus', 'Phi', 'Axon', 'Soul'],
-  }),
+  introspectCheck: async () => {
+    const vectrStatus = await isVectrAvailable(config.vectrUrl);
+    return {
+      connected_producers: {
+        Phi: 'subscribed',
+        Vectr: vectrStatus ? 'available' : 'unavailable',
+      },
+      connected_consumers: ['Thalamus', 'Phi', 'Axon', 'Soul'],
+      db_stats: dbStats,
+    };
+  },
 
   onShutdown: async () => {
     await closePool();
