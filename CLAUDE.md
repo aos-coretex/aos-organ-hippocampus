@@ -29,7 +29,7 @@
 
 ```bash
 npm install                     # Install dependencies
-npm test                        # Run 24 unit tests (serial, hippocampus_test DB)
+npm test                        # Run 37 tests (serial, hippocampus_test DB)
 npm run setup-db                # Create database + apply migrations
 HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 ```
@@ -42,6 +42,7 @@ HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 | `/conversations/:urn` | GET | Retrieve conversation with messages |
 | `/conversations` | GET | List conversations (filter by participant/status) |
 | `/conversations/:urn/messages` | POST | Append message (transactional seq ordering) |
+| `/conversations/:urn/messages/batch` | POST | Batch append messages (single transaction) |
 | `/conversations/:urn/complete` | POST | Complete conversation (triggers async summary) |
 | `/conversations/:urn/archive` | POST | Archive completed conversation |
 | `/conversations/:urn/summarize` | POST | Generate/regenerate LLM summary |
@@ -55,8 +56,12 @@ HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 ## Stubs (Future Relays)
 
 - Vectr embedding pipeline (Relay 4) — messages stored without embeddings
-- Phi integration (Relay 3) — URN minting via graph-adapter.js
 - Spine message handlers (Relay 5) — onMessage/subscriptions empty
+
+## Completed Relays
+
+- Relay 2 (h6g-2): Core API — conversations, messages, lifecycle, summarization, query
+- Relay 3 (h6g-3): Phi integration — batch endpoint, context loading, session lifecycle
 
 ## Zero Cross-Contamination Rules
 

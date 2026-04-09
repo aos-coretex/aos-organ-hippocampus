@@ -132,6 +132,96 @@ export function createConversationRoutes(app, _config) {
     }
   });
 
+  // POST /conversations/:urn/messages/batch — Batch append messages
+  app.post('/conversations/:urn/messages/batch', async (req, res) => {
+    const { urn } = req.params;
+    const { messages } = req.body;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'messages must be a non-empty array' });
+    }
+
+    const validRoles = ['user', 'assistant', 'system'];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (!msg.role || !msg.content) {
+        return res.status(400).json({ error: `Message at index ${i} missing role or content` });
+      }
+      if (!validRoles.includes(msg.role)) {
+        return res.status(400).json({ error: `Message at index ${i}: role must be one of: ${validRoles.join(', ')}` });
+      }
+    }
+
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Lock the conversation row and verify it exists + is active
+      const conv = await client.query(
+        'SELECT urn, status FROM conversations WHERE urn = $1 FOR UPDATE',
+        [urn],
+      );
+      if (conv.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Conversation not found', urn });
+      }
+      if (conv.rows[0].status !== 'active') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Cannot append to ${conv.rows[0].status} conversation`,
+          urn,
+          status: conv.rows[0].status,
+        });
+      }
+
+      // Get starting sequence number
+      const seqResult = await client.query(
+        'SELECT COALESCE(MAX(seq), 0) AS max_seq FROM messages WHERE conversation_urn = $1',
+        [urn],
+      );
+      const startSeq = seqResult.rows[0].max_seq + 1;
+
+      // Build bulk INSERT values
+      const valueClauses = [];
+      const params = [];
+      let paramIdx = 1;
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        const seq = startSeq + i;
+        valueClauses.push(`($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4}, $${paramIdx + 5})`);
+        params.push(urn, msg.role, msg.content, msg.participant_urn || null, seq, JSON.stringify(msg.metadata || {}));
+        paramIdx += 6;
+      }
+
+      await client.query(
+        `INSERT INTO messages (conversation_urn, role, content, participant_urn, seq, metadata)
+         VALUES ${valueClauses.join(', ')}`,
+        params,
+      );
+
+      // Update conversation counters
+      await client.query(
+        'UPDATE conversations SET message_count = message_count + $1, updated_at = NOW() WHERE urn = $2',
+        [messages.length, urn],
+      );
+
+      await client.query('COMMIT');
+
+      const endSeq = startSeq + messages.length - 1;
+      res.status(201).json({
+        conversation_urn: urn,
+        messages_stored: messages.length,
+        seq_range: { from: startSeq, to: endSeq },
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      res.status(500).json({ error: err.message });
+    } finally {
+      client.release();
+    }
+  });
+
   // GET /conversations/:urn — Retrieve a conversation
   app.get('/conversations/:urn', async (req, res) => {
     const { urn } = req.params;
