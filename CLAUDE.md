@@ -62,6 +62,7 @@ HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 - Relay 3 (h6g-3): Phi integration — batch endpoint, context loading, session lifecycle
 - Relay 4 (h6g-4): Vectr integration — embedding pipeline, semantic search, backfill
 - Relay 5 (h6g-5): Spine handlers — directed OTM, broadcast sub/pub, LaunchAgent
+- Relay 6 (h6g-6): CV tests — 6 categories registered in Vigil, validated against live instance
 
 ## LaunchAgent
 
