@@ -4,8 +4,10 @@
  */
 import { getPool } from '../db/pool.js';
 import { summarizeConversation, isSummarizerAvailable } from '../../lib/summarizer.js';
+import { embedText, embedBatch } from '../../lib/vectr-client.js';
+import pgvector from 'pgvector/pg';
 
-export function createConversationRoutes(app, _config) {
+export function createConversationRoutes(app, config) {
 
   // POST /conversations — Create a new conversation
   app.post('/conversations', async (req, res) => {
@@ -99,7 +101,7 @@ export function createConversationRoutes(app, _config) {
       );
       const seq = seqResult.rows[0].next_seq;
 
-      // Insert message (no embedding — Relay 4 adds Vectr)
+      // Insert message without embedding first (insert-first-embed-second)
       const msgResult = await client.query(
         `INSERT INTO messages (conversation_urn, role, content, participant_urn, seq, metadata)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -116,12 +118,22 @@ export function createConversationRoutes(app, _config) {
       await client.query('COMMIT');
 
       const msg = msgResult.rows[0];
+
+      // Embed after commit — soft-failure, never loses the message
+      const embedding = await embedText(config.vectrUrl, content);
+      if (embedding) {
+        await pool.query(
+          'UPDATE messages SET embedding = $1 WHERE id = $2',
+          [pgvector.toSql(embedding), msg.id],
+        );
+      }
+
       res.status(201).json({
         id: msg.id,
         conversation_urn: msg.conversation_urn,
         role: msg.role,
         seq: msg.seq,
-        embedded: false,
+        embedded: embedding !== null,
         created_at: msg.created_at,
       });
     } catch (err) {
@@ -208,11 +220,30 @@ export function createConversationRoutes(app, _config) {
 
       await client.query('COMMIT');
 
+      // Embed all messages in single batch call after commit — soft-failure
+      const texts = messages.map(m => m.content);
+      const embeddings = await embedBatch(config.vectrUrl, texts);
+
+      const updatePromises = [];
+      for (let i = 0; i < embeddings.length; i++) {
+        if (embeddings[i]) {
+          updatePromises.push(
+            pool.query(
+              'UPDATE messages SET embedding = $1 WHERE conversation_urn = $2 AND seq = $3',
+              [pgvector.toSql(embeddings[i]), urn, startSeq + i],
+            ),
+          );
+        }
+      }
+      await Promise.all(updatePromises);
+
+      const embeddedCount = embeddings.filter(e => e !== null).length;
       const endSeq = startSeq + messages.length - 1;
       res.status(201).json({
         conversation_urn: urn,
         messages_stored: messages.length,
         seq_range: { from: startSeq, to: endSeq },
+        embedded_count: embeddedCount,
       });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -373,7 +404,7 @@ export function createConversationRoutes(app, _config) {
 
       // Trigger async summarization if no summary exists
       if (!row.summary && isSummarizerAvailable()) {
-        triggerAsyncSummarization(pool, urn);
+        triggerAsyncSummarization(pool, urn, config);
       }
 
       res.json({
@@ -466,13 +497,14 @@ export function createConversationRoutes(app, _config) {
       const { summary, token_count } = await summarizeConversation(msgs.rows);
       const generatedAt = new Date().toISOString();
 
-      // Update conversation with summary (embedding stub — Relay 4)
+      // Embed the summary — soft-failure
+      const summaryEmbedding = await embedText(config.vectrUrl, summary);
       await pool.query(
-        'UPDATE conversations SET summary = $1, updated_at = NOW() WHERE urn = $2',
-        [summary, urn],
+        'UPDATE conversations SET summary = $1, summary_embedding = $2, updated_at = NOW() WHERE urn = $3',
+        [summary, summaryEmbedding ? pgvector.toSql(summaryEmbedding) : null, urn],
       );
 
-      res.json({ urn, summary, token_count, generated_at: generatedAt });
+      res.json({ urn, summary, token_count, generated_at: generatedAt, summary_embedded: summaryEmbedding !== null });
     } catch (err) {
       // SUMMARY_GENERATION_FAILED — graceful degradation
       if (err.code === 'LLM_UNAVAILABLE' || err.code === 'LLM_CALL_FAILED') {
@@ -490,8 +522,9 @@ export function createConversationRoutes(app, _config) {
 /**
  * Fire-and-forget summarization for conversation completion.
  * Errors are logged but do not affect the completion response.
+ * Embeds the summary via Vectr (soft-failure).
  */
-function triggerAsyncSummarization(pool, urn) {
+function triggerAsyncSummarization(pool, urn, config) {
   (async () => {
     try {
       const msgs = await pool.query(
@@ -501,15 +534,19 @@ function triggerAsyncSummarization(pool, urn) {
       if (msgs.rows.length === 0) return;
 
       const { summary } = await summarizeConversation(msgs.rows);
+
+      // Embed the summary — soft-failure
+      const summaryEmbedding = await embedText(config.vectrUrl, summary);
       await pool.query(
-        'UPDATE conversations SET summary = $1, updated_at = NOW() WHERE urn = $2',
-        [summary, urn],
+        'UPDATE conversations SET summary = $1, summary_embedding = $2, updated_at = NOW() WHERE urn = $3',
+        [summary, summaryEmbedding ? pgvector.toSql(summaryEmbedding) : null, urn],
       );
 
       process.stdout.write(JSON.stringify({
         timestamp: new Date().toISOString(),
         event: 'async_summarization_complete',
         urn,
+        summary_embedded: summaryEmbedding !== null,
       }) + '\n');
     } catch (err) {
       process.stdout.write(JSON.stringify({

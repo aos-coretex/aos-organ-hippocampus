@@ -3,6 +3,7 @@ import config from './config.js';
 import { initPool, closePool } from './db/pool.js';
 import { verifySchema } from './db/schema.js';
 import { mountRoutes } from './routes/index.js';
+import { isVectrAvailable } from '../lib/vectr-client.js';
 
 // Initialize database before organ boot
 const dbStats = await initPool();
@@ -14,7 +15,7 @@ const organ = await createOrgan({
   binding: config.binding,
   spineUrl: config.spineUrl,
 
-  dependencies: ['Spine'],  // Minimal for Relay 2; Relay 5 adds Vectr, Graph, Phi
+  dependencies: ['Spine'],  // Relay 5 adds full dependency checks
 
   routes: (app) => mountRoutes(app, config),
 
@@ -33,9 +34,30 @@ const organ = await createOrgan({
         SELECT
           (SELECT COUNT(*) FROM conversations WHERE status = 'active') AS active,
           (SELECT COUNT(*) FROM conversations WHERE status = 'completed') AS completed,
-          (SELECT COUNT(*) FROM messages) AS total_messages
+          (SELECT COUNT(*) FROM messages) AS total_messages,
+          (SELECT COUNT(*) FROM messages WHERE embedding IS NOT NULL) AS embedded_messages,
+          (SELECT COUNT(*) FROM conversations WHERE summary IS NOT NULL) AS summarized,
+          (SELECT COUNT(*) FROM conversations WHERE summary_embedding IS NOT NULL) AS summary_embedded
       `);
-      return result.rows[0];
+      const r = result.rows[0];
+      const totalMessages = parseInt(r.total_messages, 10);
+      const embeddedMessages = parseInt(r.embedded_messages, 10);
+      const completed = parseInt(r.completed, 10);
+      const summarized = parseInt(r.summarized, 10);
+
+      const embeddingCoverage = totalMessages > 0
+        ? Math.round((embeddedMessages / totalMessages) * 100)
+        : 100;
+      const summaryCoverage = completed > 0
+        ? Math.round((summarized / completed) * 100)
+        : 100;
+
+      return {
+        ...r,
+        embedding_coverage_pct: embeddingCoverage,
+        summary_coverage_pct: summaryCoverage,
+        vectr_available: await isVectrAvailable(config.vectrUrl),
+      };
     } catch {
       return { db: 'unreachable' };
     }

@@ -1,14 +1,27 @@
 /**
  * Query route handlers — semantic search across conversation history.
  * Endpoints from hippocampus-organ-definition.md Section 3.
+ *
+ * Two search levels:
+ *   - "messages" (default): cosine similarity across message embeddings
+ *   - "conversations": cosine similarity across conversation summary embeddings
  */
 import { getPool } from '../db/pool.js';
+import { embedText } from '../../lib/vectr-client.js';
+import pgvector from 'pgvector/pg';
 
 export function createQueryRoutes(app, config) {
 
-  // POST /query — Semantic search across messages
+  // POST /query — Semantic search across messages or conversations
   app.post('/query', async (req, res) => {
-    const { query, participant_urn, limit = 10, threshold = 0.80, scope = 'user' } = req.body;
+    const {
+      query,
+      participant_urn,
+      limit = 10,
+      threshold = 0.80,
+      scope = 'user',
+      search_level = 'messages',
+    } = req.body;
 
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
       return res.status(400).json({ error: 'query is required and must be a non-empty string' });
@@ -22,66 +35,103 @@ export function createQueryRoutes(app, config) {
     }
 
     // Embed query text via Vectr
-    const vectrUrl = config.vectrUrl;
-    let embedding;
-    try {
-      const vectrRes = await fetch(`${vectrUrl}/embed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: query }),
-      });
-
-      if (!vectrRes.ok) {
-        throw new Error(`Vectr returned ${vectrRes.status}`);
-      }
-
-      const vectrData = await vectrRes.json();
-      embedding = vectrData.embedding;
-    } catch (_err) {
+    const queryEmbedding = await embedText(config.vectrUrl, query);
+    if (!queryEmbedding) {
       return res.status(503).json({
         error: 'Vectr unavailable — semantic search requires embedding service',
       });
     }
 
     const pool = getPool();
+    const embeddingSql = pgvector.toSql(queryEmbedding);
+
     try {
-      // Build parameterized query
-      const params = [JSON.stringify(embedding), threshold];
-      let participantFilter = '';
-      if (participant_urn) {
-        participantFilter = `AND (c.user_urn = $3 OR c.persona_urn = $3)`;
-        params.push(participant_urn);
+      if (search_level === 'conversations') {
+        return await handleConversationSearch(pool, res, {
+          embeddingSql, participant_urn, threshold, limit,
+        });
       }
-      params.push(limit);
-      const limitParam = `$${params.length}`;
 
-      const result = await pool.query(
-        `SELECT m.id, m.conversation_urn, m.content, m.role, m.seq,
-                1 - (m.embedding <=> $1::vector) AS similarity,
-                c.summary
-         FROM messages m
-         JOIN conversations c ON c.urn = m.conversation_urn
-         WHERE m.embedding IS NOT NULL
-           AND 1 - (m.embedding <=> $1::vector) >= $2
-           ${participantFilter}
-         ORDER BY m.embedding <=> $1::vector
-         LIMIT ${limitParam}`,
-        params,
-      );
-
-      res.json({
-        results: result.rows.map(row => ({
-          conversation_urn: row.conversation_urn,
-          message_id: row.id,
-          content: row.content,
-          role: row.role,
-          similarity: parseFloat(row.similarity),
-          conversation_summary: row.summary,
-        })),
-        count: result.rows.length,
+      // Default: message-level search
+      return await handleMessageSearch(pool, res, {
+        embeddingSql, participant_urn, threshold, limit,
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+}
+
+async function handleMessageSearch(pool, res, { embeddingSql, participant_urn, threshold, limit }) {
+  const params = [embeddingSql, threshold, limit];
+  let paramIndex = 4;
+
+  let participantClause = '';
+  if (participant_urn) {
+    participantClause = `AND (c.user_urn = $${paramIndex} OR c.persona_urn = $${paramIndex})`;
+    params.push(participant_urn);
+    paramIndex++;
+  }
+
+  const result = await pool.query(
+    `SELECT m.id, m.conversation_urn, m.content, m.role, m.seq,
+            1 - (m.embedding <=> $1::vector) AS similarity,
+            c.summary, c.user_urn, c.status
+     FROM messages m
+     JOIN conversations c ON c.urn = m.conversation_urn
+     WHERE m.embedding IS NOT NULL
+       AND 1 - (m.embedding <=> $1::vector) >= $2
+       ${participantClause}
+     ORDER BY m.embedding <=> $1::vector
+     LIMIT $3`,
+    params,
+  );
+
+  res.json({
+    results: result.rows.map(r => ({
+      conversation_urn: r.conversation_urn,
+      message_id: r.id,
+      content: r.content,
+      role: r.role,
+      similarity: parseFloat(parseFloat(r.similarity).toFixed(4)),
+      conversation_summary: r.summary,
+    })),
+    count: result.rows.length,
+  });
+}
+
+async function handleConversationSearch(pool, res, { embeddingSql, participant_urn, threshold, limit }) {
+  const params = [embeddingSql, threshold, limit];
+  let paramIndex = 4;
+
+  let participantClause = '';
+  if (participant_urn) {
+    participantClause = `AND (c.user_urn = $${paramIndex} OR c.persona_urn = $${paramIndex})`;
+    params.push(participant_urn);
+    paramIndex++;
+  }
+
+  const result = await pool.query(
+    `SELECT c.urn, c.summary, c.user_urn, c.message_count, c.completed_at,
+            1 - (c.summary_embedding <=> $1::vector) AS similarity
+     FROM conversations c
+     WHERE c.summary_embedding IS NOT NULL
+       AND c.status IN ('completed', 'archived')
+       AND 1 - (c.summary_embedding <=> $1::vector) >= $2
+       ${participantClause}
+     ORDER BY c.summary_embedding <=> $1::vector
+     LIMIT $3`,
+    params,
+  );
+
+  res.json({
+    results: result.rows.map(r => ({
+      conversation_urn: r.urn,
+      summary: r.summary,
+      message_count: r.message_count,
+      completed_at: r.completed_at,
+      similarity: parseFloat(parseFloat(r.similarity).toFixed(4)),
+    })),
+    count: result.rows.length,
   });
 }

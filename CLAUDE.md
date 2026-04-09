@@ -24,12 +24,14 @@
 
 - `@coretex/organ-boot` — boot factory (`createOrgan()`), Spine client, health/introspect, live loop
 - `llm-client` (from organ-shared-lib) — summarization agent
+- `lib/vectr-client.js` — Vectr embedding (single, batch, health check, 5s timeout, soft-failure)
+- `lib/graph-adapter.js` — Graph organ URN minting
 
 ## Running
 
 ```bash
 npm install                     # Install dependencies
-npm test                        # Run 37 tests (serial, hippocampus_test DB)
+npm test                        # Run 48 tests (serial, hippocampus_test DB)
 npm run setup-db                # Create database + apply migrations
 HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 ```
@@ -46,7 +48,8 @@ HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 | `/conversations/:urn/complete` | POST | Complete conversation (triggers async summary) |
 | `/conversations/:urn/archive` | POST | Archive completed conversation |
 | `/conversations/:urn/summarize` | POST | Generate/regenerate LLM summary |
-| `/query` | POST | Semantic search (requires Vectr, user-scoped) |
+| `/query` | POST | Semantic search (messages or conversations level) |
+| `/backfill/embeddings` | POST | Backfill embedding gaps (messages + summaries) |
 
 ## Schema
 
@@ -55,13 +58,13 @@ HIPPOCAMPUS_PORT=4008 npm start # Start organ (requires Spine + dependencies)
 
 ## Stubs (Future Relays)
 
-- Vectr embedding pipeline (Relay 4) — messages stored without embeddings
 - Spine message handlers (Relay 5) — onMessage/subscriptions empty
 
 ## Completed Relays
 
 - Relay 2 (h6g-2): Core API — conversations, messages, lifecycle, summarization, query
 - Relay 3 (h6g-3): Phi integration — batch endpoint, context loading, session lifecycle
+- Relay 4 (h6g-4): Vectr integration — embedding pipeline, semantic search, backfill
 
 ## Zero Cross-Contamination Rules
 
