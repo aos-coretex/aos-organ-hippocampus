@@ -5,6 +5,9 @@
 const env = process.env.NODE_ENV || 'development';
 const isAOS = env !== 'production';
 
+const vaultRoot = process.env.VAULT_ROOT
+  || '/Library/AI/AI-Infra-MDvaults/MDvault-LLM-Ops';
+
 export default {
   name: 'Hippocampus',
   port: parseInt(process.env.HIPPOCAMPUS_PORT || (isAOS ? '4008' : '3908'), 10),
@@ -13,5 +16,7 @@ export default {
   vectrUrl: process.env.VECTR_URL || (isAOS ? 'http://127.0.0.1:4001' : 'http://127.0.0.1:3901'),
   graphUrl: process.env.GRAPH_URL || (isAOS ? 'http://127.0.0.1:4020' : 'http://127.0.0.1:3920'),
   phiUrl: process.env.PHI_URL || (isAOS ? 'http://127.0.0.1:4005' : 'http://127.0.0.1:3905'),
+  vaultRoot,
+  settingsRoot: process.env.SETTINGS_ROOT || `${vaultRoot}/01-Organs`,
   env,
 };

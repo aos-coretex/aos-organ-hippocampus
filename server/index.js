@@ -1,9 +1,12 @@
 import { createOrgan } from '@coretex/organ-boot';
+import { createLoader } from '@coretex/organ-boot/llm-settings-loader';
+import { initializeUsageAttribution } from '@coretex/organ-boot/usage-attribution';
 import config from './config.js';
 import { initPool, closePool } from './db/pool.js';
 import { verifySchema } from './db/schema.js';
 import { mountRoutes } from './routes/index.js';
 import { isVectrAvailable } from '../lib/vectr-client.js';
+import { setLLMClient as setSummarizerLLM } from '../lib/summarizer.js';
 import { handleDirectedMessage } from './handlers/spine-commands.js';
 
 function log(event, data = {}) {
@@ -14,6 +17,29 @@ function log(event, data = {}) {
 // Initialize database before organ boot
 const dbStats = await initPool();
 await verifySchema();
+
+// --- LLM settings loader (MP-CONFIG-1 R6 migration — l9m-6) ---
+
+const llmLoader = createLoader({
+  organNumber: 80,
+  organName: 'hippocampus',
+  settingsRoot: config.settingsRoot,
+});
+
+// MP-CONFIG-1 R9 — register the process-default usage writer.
+initializeUsageAttribution({ organName: 'Hippocampus' });
+
+function buildLlmClient(agentName) {
+  const { config: resolved, chat } = llmLoader.resolveWithCascade(agentName);
+  const apiKeyEnv = resolved.apiKeyEnvVar || 'ANTHROPIC_API_KEY';
+  return {
+    chat,
+    isAvailable: () => Boolean(process.env[apiKeyEnv]),
+    getUsage: () => ({ agent: resolved.agentName, model: resolved.defaultModel, provider: resolved.defaultProvider }),
+  };
+}
+
+setSummarizerLLM(buildLlmClient('session-summarizer'));
 
 // Spine reference — set during onStartup, passed to route handlers for broadcast production
 let spineRef = null;
@@ -114,6 +140,8 @@ const organ = await createOrgan({
       },
       connected_consumers: ['Thalamus', 'Phi', 'Axon', 'Soul'],
       db_stats: dbStats,
+      // MP-CONFIG-1 R6 — flat per bug #9; consumed by Axon aggregator R8.
+      llm: llmLoader.introspect(),
     };
   },
 
